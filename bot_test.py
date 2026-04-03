@@ -6,8 +6,9 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 
 # ---------------- SETTINGS ----------------
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-OLLAMA_URL = "http://localhost:11434/api/generate"
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OLLAMA_URL = "https://enforcedly-unsymptomatic-jacqulyn.ngrok-free.dev/api/generate"
 
 LIMIT = 5
 usage = {}
