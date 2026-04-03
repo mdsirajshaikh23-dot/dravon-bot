@@ -1,6 +1,0 @@
-.ollama/
-.docker/
-.antigravity/
-__pycache__/
-*.pyc
-.env
