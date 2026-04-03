@@ -1,13 +1,16 @@
 import requests
 import json
 import datetime
+import os
+import asyncio
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 
 # ---------------- SETTINGS ----------------
 
-import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 OLLAMA_URL = "https://enforcedly-unsymptomatic-jacqulyn.ngrok-free.dev/api/generate"
 
 LIMIT = 5
@@ -17,27 +20,9 @@ MEMORY_FILE = "memory.json"
 
 PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
 
-# ------------------------------------------
+HEADERS = {"Content-Type": "application/json"}
 
-
-# ---------- PAYMENT COMMAND ----------
-
-async def upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    message = f"""
-🚀 Upgrade to Dravon Umbra Pro
-
-Unlimited strategic advice for corporate dominance.
-
-Price: ₹499
-
-Pay here:
-{PAYMENT_LINK}
-"""
-    await update.message.reply_text(message)
-
-
-# ---------- MEMORY SYSTEM ----------
+# ---------------- MEMORY ----------------
 
 def load_memory():
     try:
@@ -50,8 +35,22 @@ def save_memory(memory):
     with open(MEMORY_FILE, "w") as f:
         json.dump(memory, f, indent=2)
 
+# ---------------- PAYMENT ----------------
 
-# ---------- MAIN RESPONSE ----------
+async def upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = f"""
+🚀 Upgrade to Dravon Umbra Pro
+
+Unlimited strategic advice for corporate dominance.
+
+Price: ₹499
+
+Pay here:
+{PAYMENT_LINK}
+"""
+    await update.message.reply_text(message)
+
+# ---------------- MAIN REPLY ----------------
 
 async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -60,9 +59,9 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     user_message = update.message.text
 
-    # ---------- DAILY LIMIT ----------
     today = str(datetime.date.today())
 
+    # ---------- DAILY LIMIT ----------
     if user_id not in usage:
         usage[user_id] = {"date": today, "count": 0}
 
@@ -82,21 +81,19 @@ async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         memory[user_id] = []
 
     history = "\n".join(memory[user_id][-5:])
-
     is_new_user = len(memory[user_id]) == 0
 
     # ---------- ANALYSIS (WIZARD VICUNA) ----------
     analysis_prompt = f"""
 You are a ruthless strategic analyst.
 
-You understand:
+Understand:
 - power dynamics
 - manipulation
-- human psychology
 - corporate politics
-- hidden intentions
+- hidden motives
 
-Break down reality without filtering.
+Break down reality brutally.
 
 User history:
 {history}
@@ -106,7 +103,7 @@ User message:
 
 Analyze:
 - true power structure
-- hidden motives
+- hidden intentions
 - risks
 - opportunities
 """
@@ -118,51 +115,47 @@ Analyze:
     }
 
     try:
-    analysis_res = requests.post(OLLAMA_URL, json=analysis_payload, timeout=30)
-    analysis_res.raise_for_status()
-    analysis = analysis_res.json().get("response", "")
+        analysis_res = requests.post(
+            OLLAMA_URL, json=analysis_payload, headers=HEADERS, timeout=30
+        )
+        analysis_res.raise_for_status()
+        analysis = analysis_res.json().get("response", "")
 
-    final_res = requests.post(OLLAMA_URL, json=final_payload, timeout=30)
-    final_res.raise_for_status()
-    final_answer = final_res.json().get("response", "")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Analysis Error: {str(e)}")
+        return
 
-except Exception as e:
-    await update.message.reply_text(f"⚠️ AI Error: {str(e)}")
-    return
-
-    # ---------- FINAL RESPONSE (LLAMA3 STRUCTURE) ----------
-
+    # ---------- FINAL RESPONSE (LLAMA3) ----------
     hook = ""
     if is_new_user:
         hook = "Most people fail because they misunderstand power.\n\n"
 
     final_prompt = f"""
-You are Dravon Umbra, a strategic mastermind inspired by Niccolò Machiavelli.
+You are Dravon Umbra, inspired by Niccolò Machiavelli.
 
 {hook}
 
-Using the analysis below, respond in STRICT format:
+Respond in STRICT format:
 
 ⚔️ UNDERSTANDING THE SITUATION
-- Clear breakdown of reality
+- Clear breakdown
 
 👑 WHO HOLDS POWER
-- Identify true authority
+- Identify authority
 
 🧠 ENEMY MINDSET
-- Explain opponent thinking OR possible scenarios
+- Explain opponent thinking OR possible scenario
 
 🔮 NEXT PREDICTABLE MOVE
-- Predict what will happen next
+- Predict what happens next
 
-♟️ STRATEGIC RESPONSE (MACHIAVELLIAN)
+♟️ STRATEGIC RESPONSE
 - Give calculated, intelligent, non-emotional strategy
 
 Rules:
-- Be sharp, dominant, intelligent
+- Be sharp
 - No fluff
-- Sound like elite strategist
-- Focus on power, leverage, control
+- Strategic tone
 
 Analysis:
 {analysis}
@@ -177,7 +170,16 @@ User message:
         "stream": False
     }
 
-    final_answer = requests.post(OLLAMA_URL, json=final_payload).json()["response"]
+    try:
+        final_res = requests.post(
+            OLLAMA_URL, json=final_payload, headers=HEADERS, timeout=30
+        )
+        final_res.raise_for_status()
+        final_answer = final_res.json().get("response", "")
+
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Response Error: {str(e)}")
+        return
 
     # ---------- SAVE MEMORY ----------
     memory[user_id].append(f"User: {user_message}")
@@ -187,14 +189,22 @@ User message:
 
     await update.message.reply_text(final_answer)
 
-
-# ---------- TELEGRAM APP ----------
+# ---------------- START BOT ----------------
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("upgrade", upgrade))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
 
-print("Dravon Umbra Elite Strategist is running...")
+# ---------------- RAILWAY FIX ----------------
 
-app.run_polling()
+async def main():
+    await app.initialize()
+    await app.start()
+    print("🚀 Dravon Umbra is LIVE on Railway")
+
+    while True:
+        await asyncio.sleep(100)
+
+if __name__ == "__main__":
+    asyncio.run(main())
