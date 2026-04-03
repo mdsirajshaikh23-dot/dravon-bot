@@ -11,7 +11,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-OLLAMA_URL = "https://enforcedly-unsymptomatic-jacqulyn.ngrok-free.dev/api/generate"
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 
 LIMIT = 5
 usage = {}
@@ -198,13 +198,15 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reply))
 
 # ---------------- RAILWAY FIX ----------------
 
-async def main():
-    await app.initialize()
-    await app.start()
-    print("🚀 Dravon Umbra is LIVE on Railway")
 
-    while True:
-        await asyncio.sleep(100)
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("✅ Bot is running...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
