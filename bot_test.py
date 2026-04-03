@@ -8,7 +8,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 
 import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OLLAMA_URL = " https://enforcedly-unsymptomatic-jacqulyn.ngrok-free.dev"
+OLLAMA_URL = "https://enforcedly-unsymptomatic-jacqulyn.ngrok-free.dev/api/generate"
 
 LIMIT = 5
 usage = {}
@@ -117,7 +117,18 @@ Analyze:
         "stream": False
     }
 
-    analysis = requests.post(OLLAMA_URL, json=analysis_payload).json()["response"]
+    try:
+    analysis_res = requests.post(OLLAMA_URL, json=analysis_payload, timeout=30)
+    analysis_res.raise_for_status()
+    analysis = analysis_res.json().get("response", "")
+
+    final_res = requests.post(OLLAMA_URL, json=final_payload, timeout=30)
+    final_res.raise_for_status()
+    final_answer = final_res.json().get("response", "")
+
+except Exception as e:
+    await update.message.reply_text(f"⚠️ AI Error: {str(e)}")
+    return
 
     # ---------- FINAL RESPONSE (LLAMA3 STRUCTURE) ----------
 
