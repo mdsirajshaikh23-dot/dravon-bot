@@ -150,7 +150,7 @@ Hidden Insight: {enemy}
                 "Content-Type": "application/json"
             },
             json={
-                "model": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+                "model": "mistralai/mistral-7b-instruct",
                 "temperature": 0.7,
                 "max_tokens": 200,
                 "messages": [
@@ -160,15 +160,14 @@ Hidden Insight: {enemy}
             }
         )
 
-        data = response.json()
+       data = response.json()
 
-        print("DEBUG RESPONSE:", data)  # 👈 VERY IMPORTANT
+print("DEBUG RESPONSE:", data)
 
-        return data["choices"][0]["message"]["content"]
-
-    except Exception as e:
-        print("ERROR:", str(e))
-        return f"Error: {str(e)}"
+if "choices" in data:
+    return data["choices"][0]["message"]["content"]
+else:
+    return f"API Error: {data}"
 
 # ==============================
 # 📩 MESSAGE HANDLER
