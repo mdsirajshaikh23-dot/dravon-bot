@@ -160,15 +160,17 @@ Hidden Insight: {enemy}
             }
         )
 
-       data = response.json()
+        data = response.json()
+        print("DEBUG RESPONSE:", data)
 
-print("DEBUG RESPONSE:", data)
+        if "choices" in data:
+            return data["choices"][0]["message"]["content"]
+        else:
+            return f"API Error: {data}"
 
-if "choices" in data:
-    return data["choices"][0]["message"]["content"]
-else:
-    return f"API Error: {data}"
-
+    except Exception as e:
+        print("ERROR:", str(e))
+        return f"Error: {str(e)}"
 # ==============================
 # 📩 MESSAGE HANDLER
 # ==============================
