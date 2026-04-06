@@ -142,27 +142,33 @@ User: {user_text}
 Hidden Insight: {enemy}
 """
 
-    response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
-            "temperature": 0.7,
-            "max_tokens": 200,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": full_prompt}
-            ]
-        }
-    )
-
     try:
-        return response.json()["choices"][0]["message"]["content"]
-    except:
-        return "Something broke. Fix it."
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+                "temperature": 0.7,
+                "max_tokens": 200,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": full_prompt}
+                ]
+            }
+        )
+
+        data = response.json()
+
+        print("DEBUG RESPONSE:", data)  # 👈 VERY IMPORTANT
+
+        return data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print("ERROR:", str(e))
+        return f"Error: {str(e)}"
 
 # ==============================
 # 📩 MESSAGE HANDLER
