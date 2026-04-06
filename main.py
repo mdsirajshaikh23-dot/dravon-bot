@@ -150,7 +150,7 @@ Hidden Insight: {enemy}
                 "Content-Type": "application/json"
             },
             json={
-                "model": "mistralai/mistral-7b-instruct",
+                "model": "meta-llama/llama-3-8b-instruct"
                 "temperature": 0.7,
                 "max_tokens": 200,
                 "messages": [
