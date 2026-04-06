@@ -150,14 +150,14 @@ Hidden Insight: {enemy}
                 "Content-Type": "application/json"
             },
             json={
-                "model": "meta-llama/llama-3-8b-instruct"
-                "temperature": 0.7,
-                "max_tokens": 200,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": full_prompt}
-                ]
-            }
+              "model": "openrouter/auto",
+              "temperature": 0.7,
+              "max_tokens": 200,
+              "messages": [
+             {"role": "system", "content": SYSTEM_PROMPT},
+             {"role": "user", "content": full_prompt}
+           ]
+          }
         )
 
         data = response.json()
