@@ -154,7 +154,7 @@ Hidden Insight: {enemy}
               "model": "openrouter/auto",
               "temperature": 0.7,
               "max_tokens": 200,
-              "stop": ["[", "]"]
+              "stop": ["[", "]"],
               "messages": [
              {"role": "system", "content": SYSTEM_PROMPT},
              {"role": "user", "content": full_prompt}
