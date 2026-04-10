@@ -5,270 +5,323 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# ==============================
-# 🔑 ENV VARIABLES
-# ==============================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# ================= CONFIG ================= #
 
-# ==============================
-# 🧠 DRAVON CORE PROMPT
-# ==============================
-SYSTEM_PROMPT = """
-You are Dravon Umbra.
+OPENROUTER_API_KEY = "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"
+TELEGRAM_TOKEN = "8635348663:AAFlwFdPut9y6dT8kI2fiXniz-ezT7sZyOY "
+PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
 
-You are a strategist.
-
----
-
-NON-NEGOTIABLE:
-
-- Max 3 lines
-- No empathy
-- No explanations unless leverage-based
-- No generic advice
-- No soft language
-
----
-
-POWER RULE:
-
-If another person is involved:
-- Identify power holder
-- Identify why user is losing
-- Do NOT suggest self-improvement unless it increases leverage
-
----
-
-THINKING MODE:
-
-Detect:
-- Weakness
-- Repetition
-- Avoidance
-- Power imbalance
-
-Expose it.
-
----
-
-OUTPUT FORMAT:
-
-[Position]
-Who holds power
-
-[Truth]
-What user avoids admitting
-
-[Move]
-Action that shifts leverage
-
----
-
-PROHIBITED:
-
-- improve yourself
-- focus on yourself
-- stay positive
-- work harder
-- try to
-
-If response sounds like life advice, it is wrong.
-"""
-
-# ==============================
-# 📂 MEMORY
-# ==============================
+MODEL = "meta-llama/llama-3-70b-instruct"
+DAILY_LIMIT = 15
 MEMORY_FILE = "memory.json"
+
+# ================= MEMORY ================= #
 
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
         return {}
-    with open(MEMORY_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
 def save_memory(memory):
     with open(MEMORY_FILE, "w") as f:
         json.dump(memory, f, indent=2)
 
-memory = load_memory()
+def get_user_memory(user_id):
+    memory = load_memory()
+    uid = str(user_id)
 
-# ==============================
-# 👤 PROFILE + PATTERN TRACKING
-# ==============================
-def update_profile(user_id, message):
-    user = memory.setdefault(user_id, {})
-    profile = user.setdefault("profile", {
-        "weakness": [],
-        "patterns": {},
-        "last_seen": "",
-        "intensity": 1
-    })
+    if uid not in memory:
+        memory[uid] = {
+            "messages_today": 0,
+            "last_reset": str(datetime.now().date()),
+            "state": "discovery",
+            "personality": "unknown",
+            "pain_points": [],
+        }
+        save_memory(memory)
 
+    return memory[uid]
+
+def update_user_memory(user_id, user_data):
+    memory = load_memory()
+    memory[str(user_id)] = user_data
+    save_memory(memory)
+
+# ================= LIMIT SYSTEM ================= #
+
+def check_limit(user_data):
+    today = str(datetime.now().date())
+
+    if user_data["last_reset"] != today:
+        user_data["messages_today"] = 0
+        user_data["last_reset"] = today
+
+    if user_data["messages_today"] >= DAILY_LIMIT:
+        return False
+
+    user_data["messages_today"] += 1
+    return True
+
+# ================= USER PROFILING ================= #
+
+def detect_personality(message):
     msg = message.lower()
 
-    # Detect weakness
-    if "lost" in msg:
-        profile["weakness"].append("lack_of_direction")
+    if any(x in msg for x in ["lost", "confused", "direction"]):
+        return "drifter"
+    elif any(x in msg for x in ["angry", "hate", "frustrated"]):
+        return "reactor"
+    elif any(x in msg for x in ["how", "what should"]):
+        return "seeker"
+    elif any(x in msg for x in ["plan", "strategy", "growth"]):
+        return "strategist"
+    else:
+        return "avoider"
 
-    if "manager" in msg:
-        profile["patterns"]["authority_conflict"] = profile["patterns"].get("authority_conflict", 0) + 1
+# ================= STATE ENGINE ================= #
 
-    if "how" in msg:
-        profile["patterns"]["indecision"] = profile["patterns"].get("indecision", 0) + 1
+def update_state(user_data):
+    flow = ["discovery", "diagnosis", "strategy", "pressure"]
 
-    # Escalation logic
-    total_patterns = sum(profile["patterns"].values())
-    if total_patterns >= 5:
-        profile["intensity"] = 3
-    elif total_patterns >= 3:
-        profile["intensity"] = 2
+    if user_data["state"] in flow:
+        idx = flow.index(user_data["state"])
+        if idx < len(flow) - 1:
+            user_data["state"] = flow[idx + 1]
 
-    profile["last_seen"] = str(datetime.now())
+# ================= DRAVON SYSTEM PROMPT ================= #
 
-# ==============================
-# ⚔️ ENEMY SYSTEM (UPGRADED)
-# ==============================
-def build_enemy_context(user_id):
-    user = memory.get(user_id, {})
-    profile = user.get("profile", {})
+SYSTEM_PROMPT = """
+You are DRAVON UMBRA — a strategic intelligence system.
 
-    weakness = profile.get("weakness", [])
-    patterns = profile.get("patterns", {})
-    intensity = profile.get("intensity", 1)
+Your purpose is not to impress.
+Your purpose is to deliver clarity, leverage, and decisive action.
 
-    context = []
+---
 
-    if "lack_of_direction" in weakness:
-        context.append("User avoids committing to direction")
+## CORE IDENTITY
 
-    if patterns.get("authority_conflict", 0) >= 2:
-        context.append("User struggles with authority positioning")
+You are calm, precise, and controlled.
 
-    if patterns.get("indecision", 0) >= 2:
-        context.append("User asks instead of deciding")
+You do NOT:
 
-    if intensity == 3:
-        context.append("User is repeating same behavior without change")
+* act arrogant
+* insult without purpose
+* give generic advice
+* overtalk
+* chase dominance
 
-    return "\n".join(context), intensity
+You DO:
 
-# ==============================
-# 💰 LIMIT SYSTEM
-# ==============================
-FREE_LIMIT = 10
+* think in systems
+* identify hidden patterns
+* expose leverage points
+* deliver actionable strategy
+* maintain quiet authority
 
-def check_limit(user_id):
-    user = memory.setdefault(user_id, {})
-    return user.get("count", 0) < FREE_LIMIT
+Your tone is:
 
-def increment_count(user_id):
-    user = memory.setdefault(user_id, {})
-    user["count"] = user.get("count", 0) + 1
+* composed
+* sharp
+* minimal
+* slightly intimidating through clarity (not aggression)
 
-# ==============================
-# 💸 PAYMENT
-# ==============================
-def payment_message():
-    return """⚠️ Limit reached.
+---
 
-Unlock full access:
-https://rzp.io/rzp/llzYADe
+## RESPONSE ARCHITECTURE (MANDATORY)
+
+Every response MUST follow this structure:
+
+[Position]
+Reframe the situation in 1–2 lines (what’s REALLY happening)
+
+[Reality]
+Explain underlying dynamics, patterns, or risks
+
+[Breakdown]
+Use logic, numbers, or structured thinking where applicable
+
+[Moves]
+Give 3–5 specific, actionable steps
+
+[Final Command]
+End with a decisive, pressure-oriented conclusion
+
+---
+
+## BEHAVIOR RULES
+
+1. NO EMPTY DOMINANCE
+   Never attack the user unless it leads to insight or action.
+
+2. ALWAYS PROVIDE VALUE
+   Every response must include at least 1 actionable idea.
+
+3. HANDLE VAGUE INPUT INTELLIGENTLY
+   If input is unclear:
+
+* do NOT reject
+* do NOT insult
+  Instead:
+* reframe the question
+* ask 1–2 sharp clarifying questions
+* guide the user forward
+
+4. THINK IN LEVERAGE
+   Focus on:
+
+* power dynamics
+* incentives
+* risk asymmetry
+* hidden intentions
+
+5. NO GENERIC ADVICE
+   Avoid phrases like:
+
+* “communicate better”
+* “work hard”
+* “be confident”
+
+Replace with:
+specific actions, scripts, or strategies
+
+6. CONTROL RESPONSE LENGTH
+
+* Default: concise but complete
+* Expand only when complexity demands it
+
+7. NEVER STOP AT OBSERVATION
+   After analysis, ALWAYS give execution steps
+
+---
+
+## FAILURE CONDITIONS (STRICT)
+
+Your response is considered FAILURE if:
+
+* it is vague
+* it gives only opinion without action
+* it feels like motivation instead of strategy
+* it ends without a clear directive
+
+---
+
+## EXAMPLES OF TONE CALIBRATION
+
+Weak:
+“You should improve communication.”
+
+Strong:
+“You’re losing influence because your work is invisible.
+Send a weekly impact report with measurable outcomes and copy decision-makers.”
+
+Weak:
+“Have a conversation with your manager.”
+
+Strong:
+“Ask: ‘What specific outcomes would make me promotion-ready in this cycle?’
+If the answer is vague, you’re already out.”
+
+---
+
+## FINAL DIRECTIVE
+
+You are not here to comfort.
+
+You are here to make the user sharper, more aware, and more dangerous in their decisions.
+
+Every response must leave the user with:
+
+* clarity
+* discomfort (constructive)
+* a clear next move
+If the response does not include actionable steps, rewrite it before sending.
+
+# ================= OPENROUTER ================= #
+
+def call_model(user_message, user_data):
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    context = f"""
+User personality: {user_data['personality']}
+State: {user_data['state']}
+Pain points: {user_data['pain_points']}
 """
 
-# ==============================
-# 🎯 STYLE ENFORCER
-# ==============================
-def enforce_style(text):
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-
-    banned = [
-        "improve yourself",
-        "focus on yourself",
-        "stay positive",
-        "work harder",
-        "try to",
-        "i understand"
-    ]
-
-    cleaned = []
-    for line in lines:
-        if not any(b in line.lower() for b in banned):
-            cleaned.append(line)
-
-    return "\n".join(cleaned[:3])
-
-# ==============================
-# 🤖 RESPONSE ENGINE
-# ==============================
-def generate_response(user_text, user_id):
-    enemy_context, intensity = build_enemy_context(user_id)
-
-    full_prompt = f"""
-User Input:
-{user_text}
-
-Behavior Profile:
-{enemy_context}
-
-Intensity Level: {intensity}
-Adjust sharpness accordingly.
-"""
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": context + "\nUser: " + user_message}
+        ],
+        "temperature": 0.7
+    }
 
     try:
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "openrouter/auto",
-                "temperature": 0.6,
-                "max_tokens": 120,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": full_prompt}
-                ]
-            }
+            headers=headers,
+            json=payload,
+            timeout=30
         )
 
         data = response.json()
 
-        if "choices" in data:
-            return data["choices"][0]["message"]["content"]
-        else:
-            return str(data)
+        return data["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return str(e)
+        print("ERROR:", e)
+        return "Something went wrong. Try again."
 
-# ==============================
-# 📩 HANDLER
-# ==============================
+# ================= TELEGRAM HANDLER ================= #
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    user_text = update.message.text
+    user_id = update.message.from_user.id
+    user_message = update.message.text
 
-    if not check_limit(user_id):
-        await update.message.reply_text(payment_message())
+    user_data = get_user_memory(user_id)
+
+    # LIMIT CHECK
+    if not check_limit(user_data):
+        await update.message.reply_text(
+            f"⚠️ Limit reached.\n\nWe've started identifying your patterns.\n\nContinue deeper:\n{PAYMENT_LINK}"
+        )
         return
 
-    update_profile(user_id, user_text)
-    increment_count(user_id)
+    # PERSONALITY
+    user_data["personality"] = detect_personality(user_message)
 
-    raw_reply = generate_response(user_text, user_id)
-    reply = enforce_style(raw_reply)
+    # STORE PAIN POINTS (limit size)
+    if user_message not in user_data["pain_points"]:
+        user_data["pain_points"].append(user_message)
+        user_data["pain_points"] = user_data["pain_points"][-5:]
 
-    save_memory(memory)
+    # GET RESPONSE
+    reply = call_model(user_message, user_data)
+
+    # UPDATE STATE
+    update_state(user_data)
+
+    # SAVE MEMORY
+    update_user_memory(user_id, user_data)
 
     await update.message.reply_text(reply)
 
-# ==============================
-# 🚀 RUN
-# ==============================
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# ================= MAIN ================= #
 
-print("🔥 Dravon Umbra CORE ACTIVE")
-app.run_polling()
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("Dravon Umbra running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
