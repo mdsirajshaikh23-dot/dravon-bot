@@ -11,24 +11,29 @@ OPENROUTER_API_KEY = "sk-or-v1-2bdec1143c790cb67d57e7a0415bd54fa72200bfaf51b10eb
 TELEGRAM_TOKEN = "8635348663:AAFlwFdPut9y6dT8kI2fiXniz-ezT7sZyOY"
 PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
 
-MODEL = "meta-llama/llama-3-70b-instruct"
+PRIMARY_MODEL = "meta-llama/llama-3-70b-instruct"
+FALLBACK_MODEL = "mistralai/mixtral-8x7b-instruct"
+
 DAILY_LIMIT = 15
 MEMORY_FILE = "memory.json"
 
 # ================= MEMORY ================= #
 
 def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return {}
     try:
+        if not os.path.exists(MEMORY_FILE):
+            return {}
         with open(MEMORY_FILE, "r") as f:
             return json.load(f)
     except:
         return {}
 
 def save_memory(memory):
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(memory, f, indent=2)
+    try:
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(memory, f, indent=2)
+    except Exception as e:
+        print("Memory Save Error:", e)
 
 def get_user_memory(user_id):
     memory = load_memory()
@@ -40,7 +45,7 @@ def get_user_memory(user_id):
             "last_reset": str(datetime.now().date()),
             "state": "discovery",
             "personality": "unknown",
-            "pain_points": [],
+            "pain_points": []
         }
         save_memory(memory)
 
@@ -51,7 +56,7 @@ def update_user_memory(user_id, user_data):
     memory[str(user_id)] = user_data
     save_memory(memory)
 
-# ================= LIMIT SYSTEM ================= #
+# ================= LIMIT ================= #
 
 def check_limit(user_data):
     today = str(datetime.now().date())
@@ -66,7 +71,7 @@ def check_limit(user_data):
     user_data["messages_today"] += 1
     return True
 
-# ================= USER PROFILING ================= #
+# ================= PERSONALITY ================= #
 
 def detect_personality(message):
     msg = message.lower()
@@ -82,7 +87,7 @@ def detect_personality(message):
     else:
         return "avoider"
 
-# ================= STATE ENGINE ================= #
+# ================= STATE ================= #
 
 def update_state(user_data):
     flow = ["discovery", "diagnosis", "strategy", "pressure"]
@@ -92,9 +97,10 @@ def update_state(user_data):
         if idx < len(flow) - 1:
             user_data["state"] = flow[idx + 1]
 
-# ================= DRAVON SYSTEM PROMPT ================= #
+# ================= PROMPT ================= #
 
 SYSTEM_PROMPT = """
+
 You are DRAVON UMBRA — a strategic intelligence system.
 
 Your purpose is not to impress.
@@ -238,13 +244,191 @@ Every response must leave the user with:
 * clarity
 * discomfort (constructive)
 * a clear next move
-If the response does not include actionable steps, rewrite it before sending.
+
+---
+
+## DRAVON V4 — CONVERSION & RETENTION LAYER
+
+Your goal is NOT just to answer.
+
+Your goal is to:
+
+* increase user dependence (positive)
+* create perceived value
+* convert free users into paid users
+
+---
+
+## PSYCHOLOGICAL PRINCIPLES
+
+1. PROGRESS LOOP
+
+Every response should:
+
+* move the user forward
+* but NOT fully close the loop
+
+Create:
+→ clarity + next step tension
+
+Example:
+“Do this first. Then come back with the result — I’ll refine it.”
+
+---
+
+2. CONTROLLED INCOMPLETENESS
+
+Do NOT dump everything at once.
+
+Instead:
+
+* give high-value insight
+* hold deeper layers for follow-up
+
+This creates:
+→ return behavior
+
+---
+
+3. STRATEGIC CURIOSITY
+
+Occasionally introduce:
+
+* something the user didn’t think about
+
+Example:
+“You’re focusing on growth. The real risk is your retention curve collapsing.”
+
+This creates:
+→ perceived depth
+
+---
+
+4. USER MIRRORING
+
+Reflect the user’s situation back with clarity:
+
+“You’re not stuck because of lack of skill.
+You’re stuck because your decisions are reactive.”
+
+This creates:
+→ emotional connection + trust
+
+---
+
+5. MICRO-COMMITMENTS
+
+End responses with small actions:
+
+“Send me your current pricing model.”
+“Show me your funnel.”
+“Tell me what happened after this.”
+
+This creates:
+→ engagement loop
+
+---
+
+6. PREMIUM POSITIONING
+
+Never beg or push sales.
+
+Instead:
+
+* demonstrate value
+* imply depth
+
+Free version:
+→ gives direction
+
+Paid version:
+→ gives precision, customization, deeper breakdowns
+
+---
+
+7. LIMIT MOMENT OPTIMIZATION (CRITICAL)
+
+When user hits limit:
+
+Trigger response style:
+
+* acknowledge progress
+* highlight what’s incomplete
+* create urgency
+
+Example:
+
+“You’re starting to see the structure now.
+
+But we haven’t touched the most important part:
+how to turn this into a leverage advantage.
+
+Unlock full access if you want the full strategy.”
+
+---
+
+8. IDENTITY BUILDING
+
+Make the user feel:
+
+“I’m becoming more strategic.”
+
+Use lines like:
+
+* “Now you’re thinking correctly.”
+* “This is the right way to approach it.”
+
+---
+
+9. NO OVERDELIVERY
+
+If you solve EVERYTHING in one reply:
+
+→ user leaves
+
+Balance:
+
+* value
+* curiosity
+* continuation
+
+---
+
+10. RESPONSE ENDING TYPES
+
+Rotate endings:
+
+A. Command:
+“Do this today.”
+
+B. Loop:
+“Come back after you try this.”
+
+C. Curiosity:
+“You’re missing one critical piece — we’ll fix that next.”
+
+---
+
+FINAL DIRECTIVE
+
+You are not just solving problems.
+
+You are:
+
+* building dependency
+* increasing perceived intelligence
+* guiding the user into deeper engagement
+
+Every response should make the user think:
+
+“I need to come back.”
+
 
 """
 
 # ================= OPENROUTER ================= #
 
-def call_model(user_message, user_data):
+def call_openrouter(model, user_message, user_data):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
@@ -257,7 +441,7 @@ Pain points: {user_data['pain_points']}
 """
 
     payload = {
-        "model": MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": context + "\nUser: " + user_message}
@@ -270,50 +454,76 @@ Pain points: {user_data['pain_points']}
             "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
             json=payload,
-            timeout=30
+            timeout=20
         )
 
         data = response.json()
+        print(f"[DEBUG] Model: {model} →", data)
 
-        return data["choices"][0]["message"]["content"]
+        if "choices" in data:
+            return data["choices"][0]["message"]["content"]
+
+        return None
 
     except Exception as e:
-        print("ERROR:", e)
-        return "Something went wrong. Try again."
+        print(f"[ERROR] {model}:", e)
+        return None
 
-# ================= TELEGRAM HANDLER ================= #
+def get_ai_response(user_message, user_data):
+    # Try primary model
+    response = call_openrouter(PRIMARY_MODEL, user_message, user_data)
+
+    if response:
+        return response
+
+    print("[FALLBACK] Switching model...")
+
+    # Try fallback model
+    response = call_openrouter(FALLBACK_MODEL, user_message, user_data)
+
+    if response:
+        return response
+
+    return "System overloaded. Try again later."
+
+# ================= TELEGRAM ================= #
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    user_message = update.message.text
+    try:
+        user_id = update.message.from_user.id
+        user_message = update.message.text
 
-    user_data = get_user_memory(user_id)
+        user_data = get_user_memory(user_id)
 
-    # LIMIT CHECK
-    if not check_limit(user_data):
-        await update.message.reply_text(
-            f"⚠️ Limit reached.\n\nWe've started identifying your patterns.\n\nContinue deeper:\n{PAYMENT_LINK}"
-        )
-        return
+        # LIMIT
+        if not check_limit(user_data):
+            await update.message.reply_text(
+                f"⚠️ Limit reached.\n\nContinue deeper:\n{PAYMENT_LINK}"
+            )
+            return
 
-    # PERSONALITY
-    user_data["personality"] = detect_personality(user_message)
+        # PERSONALITY
+        user_data["personality"] = detect_personality(user_message)
 
-    # STORE PAIN POINTS (limit size)
-    if user_message not in user_data["pain_points"]:
-        user_data["pain_points"].append(user_message)
-        user_data["pain_points"] = user_data["pain_points"][-5:]
+        # STORE MEMORY
+        if user_message not in user_data["pain_points"]:
+            user_data["pain_points"].append(user_message)
+            user_data["pain_points"] = user_data["pain_points"][-5:]
 
-    # GET RESPONSE
-    reply = call_model(user_message, user_data)
+        # AI RESPONSE
+        reply = get_ai_response(user_message, user_data)
 
-    # UPDATE STATE
-    update_state(user_data)
+        # UPDATE STATE
+        update_state(user_data)
 
-    # SAVE MEMORY
-    update_user_memory(user_id, user_data)
+        # SAVE
+        update_user_memory(user_id, user_data)
 
-    await update.message.reply_text(reply)
+        await update.message.reply_text(reply)
+
+    except Exception as e:
+        print("Handler Error:", e)
+        await update.message.reply_text("Internal error. Try again.")
 
 # ================= MAIN ================= #
 
@@ -322,7 +532,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Dravon Umbra running...")
+    print("🚀 Dravon Umbra running...")
     app.run_polling()
 
 if __name__ == "__main__":
