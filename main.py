@@ -17,7 +17,7 @@ FALLBACK_MODEL = "meta-llama/llama-3-70b-instruct"
 DAILY_LIMIT = 15
 MEMORY_FILE = "memory.json"
 
-# ================= PROMPT LOAD ================= #
+# ================= PROMPT ================= #
 
 def load_prompt():
     try:
@@ -31,20 +31,17 @@ SYSTEM_PROMPT = load_prompt()
 # ================= MEMORY ================= #
 
 def load_memory():
+    if not os.path.exists(MEMORY_FILE):
+        return {}
     try:
-        if not os.path.exists(MEMORY_FILE):
-            return {}
         with open(MEMORY_FILE, "r") as f:
             return json.load(f)
     except:
         return {}
 
 def save_memory(memory):
-    try:
-        with open(MEMORY_FILE, "w") as f:
-            json.dump(memory, f, indent=2)
-    except Exception as e:
-        print("Memory Save Error:", e)
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(memory, f, indent=2)
 
 def get_user_memory(user_id):
     memory = load_memory()
@@ -104,41 +101,32 @@ def check_limit(user_data):
 def detect_personality(message):
     msg = message.lower()
 
-    if any(x in msg for x in ["lost", "confused", "direction"]):
-        return "drifter"
-    elif any(x in msg for x in ["angry", "hate", "frustrated"]):
-        return "reactor"
-    elif any(x in msg for x in ["how", "what should"]):
-        return "seeker"
-    elif any(x in msg for x in ["plan", "strategy", "growth"]):
+    if "confused" in msg:
+        return "reactive"
+    if "plan" in msg or "strategy" in msg:
         return "strategist"
-    else:
-        return "neutral"
+    return "neutral"
 
 # ================= V5 MEMORY EXTRACTION ================= #
 
-def extract_insights(user_message, user_data):
-    msg = user_message.lower()
+def extract_insights(message, user_data):
+    msg = message.lower()
 
-    # ROLE
     if "startup" in msg or "founder" in msg:
         user_data["identity"]["role"] = "founder"
     elif "job" in msg or "manager" in msg:
         user_data["identity"]["role"] = "employee"
 
-    # GOALS
     if "grow" in msg or "scale" in msg:
         if "growth" not in user_data["identity"]["goals"]:
             user_data["identity"]["goals"].append("growth")
 
-    # RISK
     if "safe" in msg:
         user_data["behavior"]["risk_appetite"] = "low"
     elif "aggressive" in msg:
         user_data["behavior"]["risk_appetite"] = "high"
 
-    # DECISION STYLE
-    if "confused" in msg or "not sure" in msg:
+    if "confused" in msg:
         user_data["behavior"]["decision_style"] = "reactive"
 
     return user_data
@@ -147,11 +135,19 @@ def extract_insights(user_message, user_data):
 
 def update_state(user_data):
     flow = ["discovery", "diagnosis", "strategy", "pressure"]
-
     if user_data["state"] in flow:
         idx = flow.index(user_data["state"])
         if idx < len(flow) - 1:
             user_data["state"] = flow[idx + 1]
+
+# ================= INTENSITY FILTER ================= #
+
+def is_low_intent(msg):
+    return msg.lower().strip() in ["hi", "hello", "hey", "yo"]
+
+def needs_simulation(msg):
+    triggers = ["should i", "what if", "decision", "choose", "risk"]
+    return any(t in msg.lower() for t in triggers)
 
 # ================= OPENROUTER ================= #
 
@@ -167,16 +163,11 @@ def call_openrouter(model, user_message, user_data, retries=3):
             "role": "system",
             "content": f"""
 User Intelligence Profile:
-
 Role: {user_data['identity']['role']}
 Goals: {user_data['identity']['goals']}
-Stage: {user_data['identity']['stage']}
-
 Risk Appetite: {user_data['behavior']['risk_appetite']}
 Decision Style: {user_data['behavior']['decision_style']}
-
-Patterns: {user_data['history']['patterns']}
-Recent Pain Points: {user_data['pain_points']}
+Pain Points: {user_data['pain_points']}
 """
         },
         {"role": "user", "content": user_message}
@@ -188,100 +179,100 @@ Recent Pain Points: {user_data['pain_points']}
         "temperature": 0.7
     }
 
-    for attempt in range(retries):
+    for i in range(retries):
         try:
-            response = requests.post(
+            res = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers=headers,
                 json=payload,
                 timeout=40
             )
 
-            if response.status_code == 200:
-                data = response.json()
-                if "choices" in data:
-                    return data["choices"][0]["message"]["content"]
+            if res.status_code == 200:
+                data = res.json()
+                return data["choices"][0]["message"]["content"]
 
-            print(f"[Retry {attempt+1}] {model} Failed:", response.text)
+            print("Retry:", res.text)
 
         except Exception as e:
-            print(f"[ERROR Attempt {attempt+1}]:", e)
+            print("Error:", e)
 
     return None
 
 def get_ai_response(user_message, user_data):
-    response = call_openrouter(PRIMARY_MODEL, user_message, user_data)
+    res = call_openrouter(PRIMARY_MODEL, user_message, user_data)
 
-    if response:
-        return response
+    if res:
+        return res
 
-    print("[FALLBACK] Switching model...")
+    res = call_openrouter(FALLBACK_MODEL, user_message, user_data)
 
-    response = call_openrouter(FALLBACK_MODEL, user_message, user_data)
-
-    if response:
-        return response
+    if res:
+        return res
 
     return """[Position]
-System instability detected — not your input.
-
-[Reality]
-Model failed due to load or API limits.
+System instability detected.
 
 [Move]
-Wait 10–20 seconds and retry.
+Retry in a few seconds.
 
 [Final Command]
-Send your message again."""
-    
+Send again."""
+
+# ================= V7 EXECUTION PUSH ================= #
+
+def add_execution_push(reply):
+    return reply + "\n\n[Next Step]\nDo one action now. Then come back."
+
 # ================= TELEGRAM ================= #
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.message.from_user.id
-        user_message = update.message.text
+    user_id = update.message.from_user.id
+    user_message = update.message.text
 
-        user_data = get_user_memory(user_id)
+    user_data = get_user_memory(user_id)
 
-        # LIMIT
-        if not check_limit(user_data):
-            await update.message.reply_text(
-                f"""⚠️ Limit reached.
+    # LIMIT
+    if not check_limit(user_data):
+        await update.message.reply_text(
+            f"""⚠️ Limit reached.
 
-You’re starting to see the structure.
+You’ve started building clarity.
 
-But the real leverage layer is next.
+Next layer unlocks real leverage.
 
-Unlock full access:
 {PAYMENT_LINK}"""
-            )
-            return
+        )
+        return
 
-        # PERSONALITY
-        user_data["personality"] = detect_personality(user_message)
-
-        # V5 EXTRACTION
-        user_data = extract_insights(user_message, user_data)
-
-        # MEMORY STORE
-        if user_message not in user_data["pain_points"]:
-            user_data["pain_points"].append(user_message)
-            user_data["pain_points"] = user_data["pain_points"][-5:]
-
-        # AI RESPONSE
-        reply = get_ai_response(user_message, user_data)
-
-        # STATE UPDATE
-        update_state(user_data)
-
-        # SAVE
-        update_user_memory(user_id, user_data)
-
+    # LOW INTENT FILTER
+    if is_low_intent(user_message):
+        reply = "Good. What are we solving today?"
         await update.message.reply_text(reply)
+        return
 
-    except Exception as e:
-        print("Handler Error:", e)
-        await update.message.reply_text("Internal error. Try again.")
+    # PERSONALITY + MEMORY
+    user_data["personality"] = detect_personality(user_message)
+    user_data = extract_insights(user_message, user_data)
+
+    if user_message not in user_data["pain_points"]:
+        user_data["pain_points"].append(user_message)
+        user_data["pain_points"] = user_data["pain_points"][-5:]
+
+    # SIMULATION TRIGGER
+    if needs_simulation(user_message):
+        user_message += "\n\n[Run simulation]"
+
+    # AI RESPONSE
+    reply = get_ai_response(user_message, user_data)
+
+    # ADD EXECUTION PUSH
+    reply = add_execution_push(reply)
+
+    update_state(user_data)
+    update_user_memory(user_id, user_data)
+
+    await update.message.reply_text(reply)
 
 # ================= MAIN ================= #
 
