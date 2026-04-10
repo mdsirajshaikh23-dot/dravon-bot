@@ -8,7 +8,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 # ================= CONFIG ================= #
 
 OPENROUTER_API_KEY = "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"
-TELEGRAM_TOKEN = "8635348663:AAFlwFdPut9y6dT8kI2fiXniz-ezT7sZyOY "
+TELEGRAM_TOKEN = "8635348663:AAFlwFdPut9y6dT8kI2fiXniz-ezT7sZyOY"
 PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
 
 MODEL = "meta-llama/llama-3-70b-instruct"
@@ -239,6 +239,8 @@ Every response must leave the user with:
 * discomfort (constructive)
 * a clear next move
 If the response does not include actionable steps, rewrite it before sending.
+
+"""
 
 # ================= OPENROUTER ================= #
 
