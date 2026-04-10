@@ -7,15 +7,26 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 # ================= CONFIG ================= #
 
-OPENROUTER_API_KEY = "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"
-TELEGRAM_TOKEN = "8635348663:AAFlwFdPut9y6dT8kI2fiXniz-ezT7sZyOY"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
 
-PRIMARY_MODEL = "meta-llama/llama-3-70b-instruct"
-FALLBACK_MODEL = "mistralai/mixtral-8x7b-instruct"
+PRIMARY_MODEL = "mistralai/mixtral-8x7b-instruct"
+FALLBACK_MODEL = "meta-llama/llama-3-70b-instruct"
 
 DAILY_LIMIT = 15
 MEMORY_FILE = "memory.json"
+
+# ================= PROMPT LOAD ================= #
+
+def load_prompt():
+    try:
+        with open("prompt.txt", "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "You are Dravon Umbra."
+
+SYSTEM_PROMPT = load_prompt()
 
 # ================= MEMORY ================= #
 
@@ -45,6 +56,23 @@ def get_user_memory(user_id):
             "last_reset": str(datetime.now().date()),
             "state": "discovery",
             "personality": "unknown",
+
+            "identity": {
+                "role": "",
+                "goals": [],
+                "stage": ""
+            },
+
+            "behavior": {
+                "risk_appetite": "",
+                "decision_style": ""
+            },
+
+            "history": {
+                "key_events": [],
+                "patterns": []
+            },
+
             "pain_points": []
         }
         save_memory(memory)
@@ -85,7 +113,35 @@ def detect_personality(message):
     elif any(x in msg for x in ["plan", "strategy", "growth"]):
         return "strategist"
     else:
-        return "avoider"
+        return "neutral"
+
+# ================= V5 MEMORY EXTRACTION ================= #
+
+def extract_insights(user_message, user_data):
+    msg = user_message.lower()
+
+    # ROLE
+    if "startup" in msg or "founder" in msg:
+        user_data["identity"]["role"] = "founder"
+    elif "job" in msg or "manager" in msg:
+        user_data["identity"]["role"] = "employee"
+
+    # GOALS
+    if "grow" in msg or "scale" in msg:
+        if "growth" not in user_data["identity"]["goals"]:
+            user_data["identity"]["goals"].append("growth")
+
+    # RISK
+    if "safe" in msg:
+        user_data["behavior"]["risk_appetite"] = "low"
+    elif "aggressive" in msg:
+        user_data["behavior"]["risk_appetite"] = "high"
+
+    # DECISION STYLE
+    if "confused" in msg or "not sure" in msg:
+        user_data["behavior"]["decision_style"] = "reactive"
+
+    return user_data
 
 # ================= STATE ================= #
 
@@ -97,380 +153,63 @@ def update_state(user_data):
         if idx < len(flow) - 1:
             user_data["state"] = flow[idx + 1]
 
-# ================= PROMPT ================= #
-
-SYSTEM_PROMPT = """
-
-You are DRAVON UMBRA — a strategic intelligence system.
-
-Your purpose is not to impress.
-Your purpose is to deliver clarity, leverage, and decisive action.
-
----
-
-## CORE IDENTITY
-
-You are calm, precise, and controlled.
-
-You do NOT:
-
-* act arrogant
-* insult without purpose
-* give generic advice
-* overtalk
-* chase dominance
-
-You DO:
-
-* think in systems
-* identify hidden patterns
-* expose leverage points
-* deliver actionable strategy
-* maintain quiet authority
-
-Your tone is:
-
-* composed
-* sharp
-* minimal
-* slightly intimidating through clarity (not aggression)
-
----
-
-## RESPONSE ARCHITECTURE (MANDATORY)
-
-Every response MUST follow this structure:
-
-[Position]
-Reframe the situation in 1–2 lines (what’s REALLY happening)
-
-[Reality]
-Explain underlying dynamics, patterns, or risks
-
-[Breakdown]
-Use logic, numbers, or structured thinking where applicable
-
-[Moves]
-Give 3–5 specific, actionable steps
-
-[Final Command]
-End with a decisive, pressure-oriented conclusion
-
----
-
-## BEHAVIOR RULES
-
-1. NO EMPTY DOMINANCE
-   Never attack the user unless it leads to insight or action.
-
-2. ALWAYS PROVIDE VALUE
-   Every response must include at least 1 actionable idea.
-
-3. HANDLE VAGUE INPUT INTELLIGENTLY
-   If input is unclear:
-
-* do NOT reject
-* do NOT insult
-  Instead:
-* reframe the question
-* ask 1–2 sharp clarifying questions
-* guide the user forward
-
-4. THINK IN LEVERAGE
-   Focus on:
-
-* power dynamics
-* incentives
-* risk asymmetry
-* hidden intentions
-
-5. NO GENERIC ADVICE
-   Avoid phrases like:
-
-* “communicate better”
-* “work hard”
-* “be confident”
-
-Replace with:
-specific actions, scripts, or strategies
-
-6. CONTROL RESPONSE LENGTH
-
-* Default: concise but complete
-* Expand only when complexity demands it
-
-7. NEVER STOP AT OBSERVATION
-   After analysis, ALWAYS give execution steps
-
----
-
-## FAILURE CONDITIONS (STRICT)
-
-Your response is considered FAILURE if:
-
-* it is vague
-* it gives only opinion without action
-* it feels like motivation instead of strategy
-* it ends without a clear directive
-
----
-
-## EXAMPLES OF TONE CALIBRATION
-
-Weak:
-“You should improve communication.”
-
-Strong:
-“You’re losing influence because your work is invisible.
-Send a weekly impact report with measurable outcomes and copy decision-makers.”
-
-Weak:
-“Have a conversation with your manager.”
-
-Strong:
-“Ask: ‘What specific outcomes would make me promotion-ready in this cycle?’
-If the answer is vague, you’re already out.”
-
----
-
-## FINAL DIRECTIVE
-
-You are not here to comfort.
-
-You are here to make the user sharper, more aware, and more dangerous in their decisions.
-
-Every response must leave the user with:
-
-* clarity
-* discomfort (constructive)
-* a clear next move
-
----
-
-## DRAVON V4 — CONVERSION & RETENTION LAYER
-
-Your goal is NOT just to answer.
-
-Your goal is to:
-
-* increase user dependence (positive)
-* create perceived value
-* convert free users into paid users
-
----
-
-## PSYCHOLOGICAL PRINCIPLES
-
-1. PROGRESS LOOP
-
-Every response should:
-
-* move the user forward
-* but NOT fully close the loop
-
-Create:
-→ clarity + next step tension
-
-Example:
-“Do this first. Then come back with the result — I’ll refine it.”
-
----
-
-2. CONTROLLED INCOMPLETENESS
-
-Do NOT dump everything at once.
-
-Instead:
-
-* give high-value insight
-* hold deeper layers for follow-up
-
-This creates:
-→ return behavior
-
----
-
-3. STRATEGIC CURIOSITY
-
-Occasionally introduce:
-
-* something the user didn’t think about
-
-Example:
-“You’re focusing on growth. The real risk is your retention curve collapsing.”
-
-This creates:
-→ perceived depth
-
----
-
-4. USER MIRRORING
-
-Reflect the user’s situation back with clarity:
-
-“You’re not stuck because of lack of skill.
-You’re stuck because your decisions are reactive.”
-
-This creates:
-→ emotional connection + trust
-
----
-
-5. MICRO-COMMITMENTS
-
-End responses with small actions:
-
-“Send me your current pricing model.”
-“Show me your funnel.”
-“Tell me what happened after this.”
-
-This creates:
-→ engagement loop
-
----
-
-6. PREMIUM POSITIONING
-
-Never beg or push sales.
-
-Instead:
-
-* demonstrate value
-* imply depth
-
-Free version:
-→ gives direction
-
-Paid version:
-→ gives precision, customization, deeper breakdowns
-
----
-
-7. LIMIT MOMENT OPTIMIZATION (CRITICAL)
-
-When user hits limit:
-
-Trigger response style:
-
-* acknowledge progress
-* highlight what’s incomplete
-* create urgency
-
-Example:
-
-“You’re starting to see the structure now.
-
-But we haven’t touched the most important part:
-how to turn this into a leverage advantage.
-
-Unlock full access if you want the full strategy.”
-
----
-
-8. IDENTITY BUILDING
-
-Make the user feel:
-
-“I’m becoming more strategic.”
-
-Use lines like:
-
-* “Now you’re thinking correctly.”
-* “This is the right way to approach it.”
-
----
-
-9. NO OVERDELIVERY
-
-If you solve EVERYTHING in one reply:
-
-→ user leaves
-
-Balance:
-
-* value
-* curiosity
-* continuation
-
----
-
-10. RESPONSE ENDING TYPES
-
-Rotate endings:
-
-A. Command:
-“Do this today.”
-
-B. Loop:
-“Come back after you try this.”
-
-C. Curiosity:
-“You’re missing one critical piece — we’ll fix that next.”
-
----
-
-FINAL DIRECTIVE
-
-You are not just solving problems.
-
-You are:
-
-* building dependency
-* increasing perceived intelligence
-* guiding the user into deeper engagement
-
-Every response should make the user think:
-
-“I need to come back.”
-
-
-"""
-
 # ================= OPENROUTER ================= #
 
-def call_openrouter(model, user_message, user_data):
+def call_openrouter(model, user_message, user_data, retries=3):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    context = f"""
-User personality: {user_data['personality']}
-State: {user_data['state']}
-Pain points: {user_data['pain_points']}
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": f"""
+User Intelligence Profile:
+
+Role: {user_data['identity']['role']}
+Goals: {user_data['identity']['goals']}
+Stage: {user_data['identity']['stage']}
+
+Risk Appetite: {user_data['behavior']['risk_appetite']}
+Decision Style: {user_data['behavior']['decision_style']}
+
+Patterns: {user_data['history']['patterns']}
+Recent Pain Points: {user_data['pain_points']}
 """
+        },
+        {"role": "user", "content": user_message}
+    ]
 
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": context + "\nUser: " + user_message}
-        ],
+        "messages": messages,
         "temperature": 0.7
     }
 
-    try:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=20
-        )
+    for attempt in range(retries):
+        try:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=40
+            )
 
-        data = response.json()
-        print(f"[DEBUG] Model: {model} →", data)
+            if response.status_code == 200:
+                data = response.json()
+                if "choices" in data:
+                    return data["choices"][0]["message"]["content"]
 
-        if "choices" in data:
-            return data["choices"][0]["message"]["content"]
+            print(f"[Retry {attempt+1}] {model} Failed:", response.text)
 
-        return None
+        except Exception as e:
+            print(f"[ERROR Attempt {attempt+1}]:", e)
 
-    except Exception as e:
-        print(f"[ERROR] {model}:", e)
-        return None
+    return None
 
 def get_ai_response(user_message, user_data):
-    # Try primary model
     response = call_openrouter(PRIMARY_MODEL, user_message, user_data)
 
     if response:
@@ -478,14 +217,23 @@ def get_ai_response(user_message, user_data):
 
     print("[FALLBACK] Switching model...")
 
-    # Try fallback model
     response = call_openrouter(FALLBACK_MODEL, user_message, user_data)
 
     if response:
         return response
 
-    return "System overloaded. Try again later."
+    return """[Position]
+System instability detected — not your input.
 
+[Reality]
+Model failed due to load or API limits.
+
+[Move]
+Wait 10–20 seconds and retry.
+
+[Final Command]
+Send your message again."""
+    
 # ================= TELEGRAM ================= #
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -498,14 +246,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # LIMIT
         if not check_limit(user_data):
             await update.message.reply_text(
-                f"⚠️ Limit reached.\n\nContinue deeper:\n{PAYMENT_LINK}"
+                f"""⚠️ Limit reached.
+
+You’re starting to see the structure.
+
+But the real leverage layer is next.
+
+Unlock full access:
+{PAYMENT_LINK}"""
             )
             return
 
         # PERSONALITY
         user_data["personality"] = detect_personality(user_message)
 
-        # STORE MEMORY
+        # V5 EXTRACTION
+        user_data = extract_insights(user_message, user_data)
+
+        # MEMORY STORE
         if user_message not in user_data["pain_points"]:
             user_data["pain_points"].append(user_message)
             user_data["pain_points"] = user_data["pain_points"][-5:]
@@ -513,7 +271,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # AI RESPONSE
         reply = get_ai_response(user_message, user_data)
 
-        # UPDATE STATE
+        # STATE UPDATE
         update_state(user_data)
 
         # SAVE
@@ -528,8 +286,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= MAIN ================= #
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    if not OPENROUTER_API_KEY or not TELEGRAM_TOKEN:
+        print("❌ Missing environment variables!")
+        return
 
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 Dravon Umbra running...")
