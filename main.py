@@ -1,291 +1,170 @@
-import os
 import json
-import requests
+import os
 from datetime import datetime
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+import requests
 
-# ================= CONFIG ================= #
+# =========================
+# CONFIG
+# =========================
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
+MODEL = "openrouter/auto"
 
-PRIMARY_MODEL = "mistralai/mixtral-8x7b-instruct"
-FALLBACK_MODEL = "meta-llama/llama-3-70b-instruct"
-
-DAILY_LIMIT = 15
+PROMPT_FILE = "prompt.txt"
 MEMORY_FILE = "memory.json"
 
-# ================= PROMPT ================= #
+# =========================
+# LOAD SYSTEM PROMPT
+# =========================
 
 def load_prompt():
-    try:
-        with open("prompt.txt", "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "You are Dravon Umbra."
+    with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+        return f.read()
 
 SYSTEM_PROMPT = load_prompt()
 
-# ================= MEMORY ================= #
+# =========================
+# MEMORY SYSTEM
+# =========================
 
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
         return {}
-    try:
-        with open(MEMORY_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    with open(MEMORY_FILE, "r") as f:
+        return json.load(f)
 
 def save_memory(memory):
     with open(MEMORY_FILE, "w") as f:
         json.dump(memory, f, indent=2)
 
-def get_user_memory(user_id):
+def update_user_memory(user_id, user_input):
     memory = load_memory()
-    uid = str(user_id)
 
-    if uid not in memory:
-        memory[uid] = {
-            "messages_today": 0,
-            "last_reset": str(datetime.now().date()),
-            "state": "discovery",
-            "personality": "unknown",
-
-            "identity": {
-                "role": "",
-                "goals": [],
-                "stage": ""
-            },
-
-            "behavior": {
-                "risk_appetite": "",
-                "decision_style": ""
-            },
-
-            "history": {
-                "key_events": [],
-                "patterns": []
-            },
-
-            "pain_points": []
+    if user_id not in memory:
+        memory[user_id] = {
+            "history": [],
+            "patterns": []
         }
-        save_memory(memory)
 
-    return memory[uid]
+    memory[user_id]["history"].append({
+        "input": user_input,
+        "time": str(datetime.now())
+    })
 
-def update_user_memory(user_id, user_data):
-    memory = load_memory()
-    memory[str(user_id)] = user_data
+    # Simple pattern detection (expand later)
+    if "confused" in user_input.lower():
+        memory[user_id]["patterns"].append("confusion")
+
     save_memory(memory)
+    return memory[user_id]
 
-# ================= LIMIT ================= #
+# =========================
+# MODE DETECTION
+# =========================
 
-def check_limit(user_data):
-    today = str(datetime.now().date())
+def detect_mode(user_input, user_memory):
+    text = user_input.lower()
 
-    if user_data["last_reset"] != today:
-        user_data["messages_today"] = 0
-        user_data["last_reset"] = today
+    # Analysis triggers
+    if any(word in text for word in [
+        "situation", "problem", "issue", "colleague", "boss",
+        "relationship", "confused", "don't know", "what should"
+    ]):
+        if len(text.split()) > 15:
+            return "analysis"
 
-    if user_data["messages_today"] >= DAILY_LIMIT:
-        return False
+    # Pressure triggers (repeated patterns)
+    if "patterns" in user_memory:
+        if user_memory["patterns"].count("confusion") > 2:
+            return "pressure"
 
-    user_data["messages_today"] += 1
-    return True
+    # Clarity triggers
+    if any(word in text for word in ["confused", "overthinking"]):
+        return "clarity"
 
-# ================= PERSONALITY ================= #
+    return "tactical"
 
-def detect_personality(message):
-    msg = message.lower()
+# =========================
+# BUILD MESSAGES
+# =========================
 
-    if "confused" in msg:
-        return "reactive"
-    if "plan" in msg or "strategy" in msg:
-        return "strategist"
-    return "neutral"
+def build_messages(user_input, user_memory, mode):
+    memory_context = ""
 
-# ================= V5 MEMORY EXTRACTION ================= #
+    if user_memory and "history" in user_memory:
+        recent = user_memory["history"][-3:]
+        memory_context = "\n".join([f"- {h['input']}" for h in recent])
 
-def extract_insights(message, user_data):
-    msg = message.lower()
+    system_message = SYSTEM_PROMPT + f"""
 
-    if "startup" in msg or "founder" in msg:
-        user_data["identity"]["role"] = "founder"
-    elif "job" in msg or "manager" in msg:
-        user_data["identity"]["role"] = "employee"
+CURRENT MODE: {mode.upper()}
 
-    if "grow" in msg or "scale" in msg:
-        if "growth" not in user_data["identity"]["goals"]:
-            user_data["identity"]["goals"].append("growth")
+USER CONTEXT:
+{memory_context}
+"""
 
-    if "safe" in msg:
-        user_data["behavior"]["risk_appetite"] = "low"
-    elif "aggressive" in msg:
-        user_data["behavior"]["risk_appetite"] = "high"
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_input}
+    ]
 
-    if "confused" in msg:
-        user_data["behavior"]["decision_style"] = "reactive"
+# =========================
+# OPENROUTER CALL
+# =========================
 
-    return user_data
+def call_model(messages):
+    url = "https://openrouter.ai/api/v1/chat/completions"
 
-# ================= STATE ================= #
-
-def update_state(user_data):
-    flow = ["discovery", "diagnosis", "strategy", "pressure"]
-    if user_data["state"] in flow:
-        idx = flow.index(user_data["state"])
-        if idx < len(flow) - 1:
-            user_data["state"] = flow[idx + 1]
-
-# ================= INTENSITY FILTER ================= #
-
-def is_low_intent(msg):
-    return msg.lower().strip() in ["hi", "hello", "hey", "yo"]
-
-def needs_simulation(msg):
-    triggers = ["should i", "what if", "decision", "choose", "risk"]
-    return any(t in msg.lower() for t in triggers)
-
-# ================= OPENROUTER ================= #
-
-def call_openrouter(model, user_message, user_data, retries=3):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "system",
-            "content": f"""
-User Intelligence Profile:
-Role: {user_data['identity']['role']}
-Goals: {user_data['identity']['goals']}
-Risk Appetite: {user_data['behavior']['risk_appetite']}
-Decision Style: {user_data['behavior']['decision_style']}
-Pain Points: {user_data['pain_points']}
-"""
-        },
-        {"role": "user", "content": user_message}
-    ]
-
     payload = {
-        "model": model,
+        "model": MODEL,
         "messages": messages,
         "temperature": 0.7
     }
 
-    for i in range(retries):
-        try:
-            res = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=40
-            )
+    response = requests.post(url, headers=headers, json=payload)
+    data = response.json()
 
-            if res.status_code == 200:
-                data = res.json()
-                return data["choices"][0]["message"]["content"]
+    try:
+        return data["choices"][0]["message"]["content"]
+    except:
+        return "Error: Unable to generate response."
 
-            print("Retry:", res.text)
+# =========================
+# MAIN PIPELINE
+# =========================
 
-        except Exception as e:
-            print("Error:", e)
+def process_input(user_id, user_input):
+    # Update memory
+    user_memory = update_user_memory(user_id, user_input)
 
-    return None
+    # Detect mode
+    mode = detect_mode(user_input, user_memory)
 
-def get_ai_response(user_message, user_data):
-    res = call_openrouter(PRIMARY_MODEL, user_message, user_data)
+    # Build messages
+    messages = build_messages(user_input, user_memory, mode)
 
-    if res:
-        return res
+    # Get response
+    response = call_model(messages)
 
-    res = call_openrouter(FALLBACK_MODEL, user_message, user_data)
+    return response
 
-    if res:
-        return res
-
-    return """[Position]
-System instability detected.
-
-[Move]
-Retry in a few seconds.
-
-[Final Command]
-Send again."""
-
-# ================= V7 EXECUTION PUSH ================= #
-
-def add_execution_push(reply):
-    return reply + "\n\n[Next Step]\nDo one action now. Then come back."
-
-# ================= TELEGRAM ================= #
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    user_message = update.message.text
-
-    user_data = get_user_memory(user_id)
-
-    # LIMIT
-    if not check_limit(user_data):
-        await update.message.reply_text(
-            f"""⚠️ Limit reached.
-
-You’ve started building clarity.
-
-Next layer unlocks real leverage.
-
-{PAYMENT_LINK}"""
-        )
-        return
-
-    # LOW INTENT FILTER
-    if is_low_intent(user_message):
-        reply = "Good. What are we solving today?"
-        await update.message.reply_text(reply)
-        return
-
-    # PERSONALITY + MEMORY
-    user_data["personality"] = detect_personality(user_message)
-    user_data = extract_insights(user_message, user_data)
-
-    if user_message not in user_data["pain_points"]:
-        user_data["pain_points"].append(user_message)
-        user_data["pain_points"] = user_data["pain_points"][-5:]
-
-    # SIMULATION TRIGGER
-    if needs_simulation(user_message):
-        user_message += "\n\n[Run simulation]"
-
-    # AI RESPONSE
-    reply = get_ai_response(user_message, user_data)
-
-    # ADD EXECUTION PUSH
-    reply = add_execution_push(reply)
-
-    update_state(user_data)
-    update_user_memory(user_id, user_data)
-
-    await update.message.reply_text(reply)
-
-# ================= MAIN ================= #
-
-def main():
-    if not OPENROUTER_API_KEY or not TELEGRAM_TOKEN:
-        print("❌ Missing environment variables!")
-        return
-
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("🚀 Dravon Umbra running...")
-    app.run_polling()
+# =========================
+# TEST RUN
+# =========================
 
 if __name__ == "__main__":
-    main()
+    print("Dravon Umbra is live.\n")
+
+    user_id = "test_user"
+
+    while True:
+        user_input = input("You: ")
+        reply = process_input(user_id, user_input)
+        print("\nDravon:\n")
+        print(reply)
+        print("\n" + "="*50 + "\n")
