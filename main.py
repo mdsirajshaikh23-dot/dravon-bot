@@ -1,6 +1,9 @@
+# DRAVON UMBRA - PRODUCTION MAIN.PY (UPGRADED WITH DIAGNOSTIC ENGINE)
+
 import os
 import json
 import requests
+import re
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -70,7 +73,16 @@ def get_user_memory(user_id):
                 "patterns": []
             },
 
-            "pain_points": []
+            "pain_points": [],
+
+            # NEW: diagnostic variables
+            "diagnostic": {
+                "income": None,
+                "runway": None,
+                "idea": None,
+                "risk": None,
+                "time": None
+            }
         }
         save_memory(memory)
 
@@ -96,22 +108,46 @@ def check_limit(user_data):
     user_data["messages_today"] += 1
     return True
 
-# ================= PERSONALITY ================= #
+# ================= DIAGNOSTIC ENGINE ================= #
 
-def detect_personality(message):
-    msg = message.lower()
+HIGH_COMPLEX_KEYWORDS = [
+    "quit", "career", "business", "money", "start",
+    "risk", "decision", "future", "plan"
+]
 
-    if "confused" in msg:
-        return "reactive"
-    if "plan" in msg or "strategy" in msg:
-        return "strategist"
-    return "neutral"
+def detect_complexity(user_input):
+    for word in HIGH_COMPLEX_KEYWORDS:
+        if word in user_input.lower():
+            return "high"
+    return "low"
 
-# ================= V5 MEMORY EXTRACTION ================= #
+def evaluate_data(user_data):
+    d = user_data["diagnostic"]
+    score = 0
+    if d.get("income"): score += 0.2
+    if d.get("runway"): score += 0.2
+    if d.get("idea"): score += 0.2
+    if d.get("risk"): score += 0.2
+    if d.get("time"): score += 0.2
+    return score
+
+def determine_mode(user_input, user_data):
+    complexity = detect_complexity(user_input)
+    data_score = evaluate_data(user_data)
+
+    if complexity == "high" and data_score < 0.6:
+        return "diagnostic"
+    elif complexity == "high" and data_score >= 0.6:
+        return "execution"
+    else:
+        return "hybrid"
+
+# ================= MEMORY EXTRACTION ================= #
 
 def extract_insights(message, user_data):
     msg = message.lower()
 
+    # existing
     if "startup" in msg or "founder" in msg:
         user_data["identity"]["role"] = "founder"
     elif "job" in msg or "manager" in msg:
@@ -121,33 +157,90 @@ def extract_insights(message, user_data):
         if "growth" not in user_data["identity"]["goals"]:
             user_data["identity"]["goals"].append("growth")
 
-    if "safe" in msg:
-        user_data["behavior"]["risk_appetite"] = "low"
-    elif "aggressive" in msg:
-        user_data["behavior"]["risk_appetite"] = "high"
+    # diagnostic extraction
+    numbers = re.findall(r"\d+", msg)
 
-    if "confused" in msg:
-        user_data["behavior"]["decision_style"] = "reactive"
+    if "income" in msg or "salary" in msg:
+        if numbers:
+            user_data["diagnostic"]["income"] = numbers[0]
+
+    if "month" in msg or "savings" in msg:
+        if numbers:
+            user_data["diagnostic"]["runway"] = numbers[0]
+
+    if "idea" in msg or "business" in msg:
+        user_data["diagnostic"]["idea"] = message
+
+    if "low" in msg and "risk" in msg:
+        user_data["diagnostic"]["risk"] = "low"
+    elif "medium" in msg:
+        user_data["diagnostic"]["risk"] = "medium"
+    elif "high" in msg:
+        user_data["diagnostic"]["risk"] = "high"
+
+    if "hour" in msg or "time" in msg:
+        if numbers:
+            user_data["diagnostic"]["time"] = numbers[0]
 
     return user_data
 
-# ================= STATE ================= #
+# ================= QUESTION ENGINE ================= #
 
-def update_state(user_data):
-    flow = ["discovery", "diagnosis", "strategy", "pressure"]
-    if user_data["state"] in flow:
-        idx = flow.index(user_data["state"])
-        if idx < len(flow) - 1:
-            user_data["state"] = flow[idx + 1]
+def generate_questions(user_data):
+    d = user_data["diagnostic"]
+    questions = []
 
-# ================= INTENSITY FILTER ================= #
+    if not d.get("income"):
+        questions.append("What is your monthly income?")
+    if not d.get("runway"):
+        questions.append("How many months can you survive without income?")
+    if not d.get("idea"):
+        questions.append("Do you have a specific idea or income path?")
+    if not d.get("risk"):
+        questions.append("What’s your risk tolerance: low, medium, or high?")
+    if not d.get("time"):
+        questions.append("How much time can you invest daily?")
 
-def is_low_intent(msg):
-    return msg.lower().strip() in ["hi", "hello", "hey", "yo"]
+    return questions
 
-def needs_simulation(msg):
-    triggers = ["should i", "what if", "decision", "choose", "risk"]
-    return any(t in msg.lower() for t in triggers)
+# ================= RESPONSE MODES ================= #
+
+def diagnostic_response(questions):
+    return f"""
+⚔️ POSITION
+You’re asking for a decision without enough data.
+
+🧠 MISSING VARIABLES
+{"\n".join([str(i+1)+'. '+q for i,q in enumerate(questions)])}
+
+🎯 NEXT STEP
+Answer these. Then I’ll give you a precise move.
+"""
+
+
+def hybrid_response(questions):
+    return f"""
+⚔️ POSITION
+Based on limited data, quitting immediately is usually a mistake.
+
+⚠️ LIMITATION
+This is a surface-level call. Precision requires more data.
+
+🧠 I NEED:
+{"\n".join([str(i+1)+'. '+q for i,q in enumerate(questions)])}
+
+🎯 NEXT STEP
+Answer these. Then I refine this into a precise strategy.
+"""
+
+
+def execution_gate():
+    return f"""
+You now have enough data for a full execution strategy.
+
+Unlock full plan:
+{PAYMENT_LINK}
+"""
 
 # ================= OPENROUTER ================= #
 
@@ -159,17 +252,7 @@ def call_openrouter(model, user_message, user_data, retries=3):
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "system",
-            "content": f"""
-User Intelligence Profile:
-Role: {user_data['identity']['role']}
-Goals: {user_data['identity']['goals']}
-Risk Appetite: {user_data['behavior']['risk_appetite']}
-Decision Style: {user_data['behavior']['decision_style']}
-Pain Points: {user_data['pain_points']}
-"""
-        },
+        {"role": "system", "content": f"User Profile: {json.dumps(user_data)}"},
         {"role": "user", "content": user_message}
     ]
 
@@ -179,7 +262,7 @@ Pain Points: {user_data['pain_points']}
         "temperature": 0.7
     }
 
-    for i in range(retries):
+    for _ in range(retries):
         try:
             res = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -189,40 +272,12 @@ Pain Points: {user_data['pain_points']}
             )
 
             if res.status_code == 200:
-                data = res.json()
-                return data["choices"][0]["message"]["content"]
+                return res.json()["choices"][0]["message"]["content"]
 
-            print("Retry:", res.text)
+        except Exception:
+            pass
 
-        except Exception as e:
-            print("Error:", e)
-
-    return None
-
-def get_ai_response(user_message, user_data):
-    res = call_openrouter(PRIMARY_MODEL, user_message, user_data)
-
-    if res:
-        return res
-
-    res = call_openrouter(FALLBACK_MODEL, user_message, user_data)
-
-    if res:
-        return res
-
-    return """[Position]
-System instability detected.
-
-[Move]
-Retry in a few seconds.
-
-[Final Command]
-Send again."""
-
-# ================= V7 EXECUTION PUSH ================= #
-
-def add_execution_push(reply):
-    return reply + "\n\n[Next Step]\nDo one action now. Then come back."
+    return "System busy. Try again."
 
 # ================= TELEGRAM ================= #
 
@@ -232,44 +287,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_data = get_user_memory(user_id)
 
-    # LIMIT
     if not check_limit(user_data):
-        await update.message.reply_text(
-            f"""⚠️ Limit reached.
-
-You’ve started building clarity.
-
-Next layer unlocks real leverage.
-
-{PAYMENT_LINK}"""
-        )
+        await update.message.reply_text(f"Limit reached.\n\nUpgrade: {PAYMENT_LINK}")
         return
 
-    # LOW INTENT FILTER
-    if is_low_intent(user_message):
-        reply = "Good. What are we solving today?"
-        await update.message.reply_text(reply)
+    if user_message.lower() in ["hi", "hello", "hey"]:
+        await update.message.reply_text("Good. What are we solving today?")
         return
 
-    # PERSONALITY + MEMORY
-    user_data["personality"] = detect_personality(user_message)
     user_data = extract_insights(user_message, user_data)
 
-    if user_message not in user_data["pain_points"]:
-        user_data["pain_points"].append(user_message)
-        user_data["pain_points"] = user_data["pain_points"][-5:]
+    mode = determine_mode(user_message, user_data)
+    questions = generate_questions(user_data)
 
-    # SIMULATION TRIGGER
-    if needs_simulation(user_message):
-        user_message += "\n\n[Run simulation]"
+    if mode == "diagnostic":
+        reply = diagnostic_response(questions)
 
-    # AI RESPONSE
-    reply = get_ai_response(user_message, user_data)
+    elif mode == "hybrid":
+        reply = hybrid_response(questions)
 
-    # ADD EXECUTION PUSH
-    reply = add_execution_push(reply)
+    elif mode == "execution":
+        reply = execution_gate()
 
-    update_state(user_data)
     update_user_memory(user_id, user_data)
 
     await update.message.reply_text(reply)
@@ -277,14 +316,10 @@ Next layer unlocks real leverage.
 # ================= MAIN ================= #
 
 def main():
-    if not OPENROUTER_API_KEY or not TELEGRAM_TOKEN:
-        print("❌ Missing environment variables!")
-        return
-
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 Dravon Umbra running...")
+    print("Dravon running...")
     app.run_polling()
 
 if __name__ == "__main__":
