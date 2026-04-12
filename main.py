@@ -1,10 +1,10 @@
-# DRAVON UMBRA - V2 PRODUCTION MAIN (FULL UPGRADE)
+# DRAVON UMBRA - FINAL PRODUCTION MAIN (ALL SYSTEMS INTEGRATED)
 
 import os
 import json
-import requests
 import re
 import asyncio
+import requests
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -16,179 +16,146 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 PAYMENT_LINK = "https://rzp.io/rzp/llzYADe"
 
-PRIMARY_MODEL = "mistralai/mixtral-8x7b-instruct"
-FALLBACK_MODEL = "meta-llama/llama-3-70b-instruct"
-
-DAILY_LIMIT = 15
+MODEL = "mistralai/mixtral-8x7b-instruct"
 MEMORY_FILE = "memory.json"
-
-# ================= PROMPT ================= #
-
-def load_prompt():
-    try:
-        with open("prompt.txt", "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "You are Dravon Umbra."
-
-SYSTEM_PROMPT = load_prompt()
+DAILY_LIMIT = 15
 
 # ================= MEMORY ================= #
 
 def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return {}
-    try:
-        with open(MEMORY_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    if not os.path.exists(MEMORY_FILE): return {}
+    with open(MEMORY_FILE, "r") as f: return json.load(f)
 
-def save_memory(memory):
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(memory, f, indent=2)
+def save_memory(mem):
+    with open(MEMORY_FILE, "w") as f: json.dump(mem, f, indent=2)
 
-def get_user_memory(user_id):
-    memory = load_memory()
+def get_user(user_id):
+    mem = load_memory()
     uid = str(user_id)
 
-    if uid not in memory:
-        memory[uid] = {
+    if uid not in mem:
+        mem[uid] = {
             "messages_today": 0,
             "last_reset": str(datetime.now().date()),
+
+            "conversation": {"state": "free_chat"},
+
             "diagnostic": {
                 "income": None,
                 "runway": None,
                 "idea": None,
                 "risk": None,
                 "time": None
-            }
+            },
+
+            "personality": {"type": "unknown", "tone": "neutral"},
+
+            "behavior_log": [],
+            "patterns": {"indecision": 0, "switching": 0},
+
+            "monetization": {"score": 0, "stage": "free"}
         }
-        save_memory(memory)
+        save_memory(mem)
 
-    return memory[uid]
+    return mem[uid]
 
-def update_user_memory(user_id, user_data):
-    memory = load_memory()
-    memory[str(user_id)] = user_data
-    save_memory(memory)
+def update_user(user_id, data):
+    mem = load_memory()
+    mem[str(user_id)] = data
+    save_memory(mem)
 
 # ================= LIMIT ================= #
 
-def check_limit(user_data):
+def check_limit(user):
     today = str(datetime.now().date())
+    if user["last_reset"] != today:
+        user["messages_today"] = 0
+        user["last_reset"] = today
 
-    if user_data["last_reset"] != today:
-        user_data["messages_today"] = 0
-        user_data["last_reset"] = today
-
-    if user_data["messages_today"] >= DAILY_LIMIT:
+    if user["messages_today"] >= DAILY_LIMIT:
         return False
 
-    user_data["messages_today"] += 1
+    user["messages_today"] += 1
     return True
 
-# ================= DIAGNOSTIC ================= #
+# ================= INTENT ================= #
 
-HIGH_COMPLEX_KEYWORDS = [
-    "quit", "career", "business", "money", "risk", "plan"
-]
-
-def detect_complexity(msg):
-    return "high" if any(w in msg.lower() for w in HIGH_COMPLEX_KEYWORDS) else "low"
-
-def evaluate_data(user_data):
-    d = user_data["diagnostic"]
-    score = sum([1 for v in d.values() if v]) * 0.2
-    return score
-
-def determine_mode(msg, user_data):
-    complexity = detect_complexity(msg)
-    score = evaluate_data(user_data)
-
-    if complexity == "high" and score < 0.6:
-        return "diagnostic"
-    elif complexity == "high":
-        return "execution"
-    return "hybrid"
+def classify_intent(msg):
+    msg = msg.lower()
+    if any(x in msg for x in ["why", "what are you", "how do you"]): return "meta"
+    if any(x in msg for x in ["should i", "quit", "start", "decision"]): return "decision"
+    return "normal"
 
 # ================= EXTRACTION ================= #
 
-def extract_data(msg, user_data):
-    d = user_data["diagnostic"]
-    numbers = re.findall(r"\d+", msg)
+def extract(msg, user):
+    d = user["diagnostic"]
+    nums = re.findall(r"\d+", msg)
 
-    if "income" in msg and numbers:
-        d["income"] = numbers[0]
-    if "month" in msg and numbers:
-        d["runway"] = numbers[0]
-    if "idea" in msg or "business" in msg:
-        d["idea"] = msg
-    if "low" in msg:
-        d["risk"] = "low"
-    elif "high" in msg:
-        d["risk"] = "high"
-    if "hour" in msg and numbers:
-        d["time"] = numbers[0]
+    if "income" in msg and nums: d["income"] = nums[0]
+    if "month" in msg and nums: d["runway"] = nums[0]
+    if "idea" in msg: d["idea"] = msg
+    if "low" in msg: d["risk"] = "low"
+    if "high" in msg: d["risk"] = "high"
+    if "hour" in msg and nums: d["time"] = nums[0]
 
-    return user_data
+    return user
+
+# ================= PERSONALITY ================= #
+
+def detect_personality(msg, user):
+    if "confused" in msg: user["personality"]["type"] = "emotional"
+    elif "fast" in msg: user["personality"]["type"] = "action"
+    elif "analyze" in msg: user["personality"]["type"] = "analytical"
+    return user
+
+# ================= BEHAVIOR ================= #
+
+def log_behavior(msg, user):
+    user["behavior_log"].append(msg)
+    user["behavior_log"] = user["behavior_log"][-20:]
+    return user
+
+
+def detect_patterns(user):
+    log = user["behavior_log"]
+    if sum("should" in m for m in log) >= 3:
+        user["patterns"]["indecision"] += 1
+    return user
+
+# ================= MONETIZATION ================= #
+
+def update_value(msg, user):
+    if len(msg) > 20: user["monetization"]["score"] += 1
+    if "should" in msg: user["monetization"]["score"] += 2
+
+    s = user["monetization"]["score"]
+    if s >= 6: user["monetization"]["stage"] = "ready"
+    elif s >= 3: user["monetization"]["stage"] = "warm"
+
+    return user
 
 # ================= QUESTIONS ================= #
 
-def generate_questions(user_data):
-    d = user_data["diagnostic"]
+def questions(user):
+    d = user["diagnostic"]
     q = []
-
-    if not d.get("income"): q.append("What is your monthly income?")
-    if not d.get("runway"): q.append("How many months can you survive without income?")
-    if not d.get("idea"): q.append("Do you have a business or income idea?")
-    if not d.get("risk"): q.append("Your risk tolerance? low / medium / high")
-    if not d.get("time"): q.append("How many hours daily can you invest?")
-
+    if not d["income"]: q.append("Monthly income?")
+    if not d["runway"]: q.append("Savings runway (months)?")
+    if not d["idea"]: q.append("Any business idea?")
     return q
 
-# ================= RESPONSES ================= #
+# ================= AI ================= #
 
-def diagnostic_response(q):
-    q_text = "\n".join([f"{i+1}. {x}" for i,x in enumerate(q)])
-    return f"⚔️ POSITION\nNeed more data.\n\n🧠 MISSING\n{q_text}\n\nAnswer these."
-
-def hybrid_response(q):
-    q_text = "\n".join([f"{i+1}. {x}" for i,x in enumerate(q)])
-    return f"⚔️ POSITION\nEarly decision likely wrong.\n\n🧠 NEED\n{q_text}"
-
-# ================= AI ENGINE ================= #
-
-def enforce_quality(reply):
-    weak = ["it depends","you could","consider"]
-    for w in weak:
-        reply = reply.replace(w, "")
-    return reply.strip()
-
-
-def build_prompt(user_message, user_data):
-    d = user_data["diagnostic"]
-
+def build_prompt(msg, user):
+    d = user["diagnostic"]
     return f"""
 You are Dravon Umbra.
+Take a position.
 
-You MUST take a position.
+Income:{d['income']} Runway:{d['runway']} Risk:{d['risk']}
 
-Context:
-Income: {d['income']}
-Runway: {d['runway']}
-Risk: {d['risk']}
-Time: {d['time']}
-
-Think:
-- Real problem
-- Constraints
-- 3 paths
-- Choose best
-- Execution steps
-
-User:
-{user_message}
+User:{msg}
 
 Format:
 ⚔️ POSITION
@@ -201,18 +168,12 @@ Format:
 
 
 def call_ai(prompt):
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
-
-    payload = {
-        "model": PRIMARY_MODEL,
-        "messages": [{"role":"user","content":prompt}]
-    }
-
-    res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+    res = requests.post("https://openrouter.ai/api/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+        json={"model": MODEL, "messages": [{"role":"user","content":prompt}]})
 
     if res.status_code == 200:
         return res.json()["choices"][0]["message"]["content"]
-
     return "Error"
 
 # ================= STREAM ================= #
@@ -220,14 +181,13 @@ def call_ai(prompt):
 async def stream(update, context, text):
     chat_id = update.effective_chat.id
     parts = text.split("\n")
-
     msg = None
     current = ""
 
     for i, p in enumerate(parts):
         current += p + "\n"
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(0.6)
 
         if i == 0:
             msg = await context.bot.send_message(chat_id, current)
@@ -237,43 +197,55 @@ async def stream(update, context, text):
             except:
                 msg = await context.bot.send_message(chat_id, current)
 
+# ================= VIRAL ================= #
+
+def viral(reply):
+    lines = reply.split("\n")
+    key = "\n".join(lines[:3])
+    return reply + f"\n\n🔥\n{key}\n— Dravon"
+
 # ================= HANDLER ================= #
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     msg = update.message.text.lower()
 
-    user_data = get_user_memory(user_id)
+    user = get_user(user_id)
 
-    if not check_limit(user_data):
-        await update.message.reply_text(f"Limit reached\n{PAYMENT_LINK}")
+    if not check_limit(user):
+        await update.message.reply_text(f"Limit hit\n{PAYMENT_LINK}")
         return
 
-    user_data = extract_data(msg, user_data)
-    mode = determine_mode(msg, user_data)
-    questions = generate_questions(user_data)
+    intent = classify_intent(msg)
 
-    if mode == "diagnostic":
-        await update.message.reply_text(diagnostic_response(questions))
+    user = extract(msg, user)
+    user = detect_personality(msg, user)
+    user = log_behavior(msg, user)
+    user = detect_patterns(user)
+    user = update_value(msg, user)
 
-    elif mode == "hybrid":
-        await update.message.reply_text(hybrid_response(questions))
+    if intent == "meta":
+        await update.message.reply_text("I ask to reduce uncertainty.")
+        return
 
+    qs = questions(user)
+
+    if qs:
+        await update.message.reply_text("\n".join(qs))
     else:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        prompt = build_prompt(msg, user_data)
+        prompt = build_prompt(msg, user)
         reply = call_ai(prompt)
-        reply = enforce_quality(reply)
+        reply = viral(reply)
         await stream(update, context, reply)
 
-    update_user_memory(user_id, user_data)
+    update_user(user_id, user)
 
 # ================= MAIN ================= #
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Dravon V2 Running...")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    print("Dravon Final Running...")
     app.run_polling()
 
 if __name__ == "__main__":
