@@ -206,17 +206,18 @@ def generate_questions(user_data):
 # ================= RESPONSE MODES ================= #
 
 def diagnostic_response(questions):
+    q_text = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
+
     return f"""
 ⚔️ POSITION
 You’re asking for a decision without enough data.
 
 🧠 MISSING VARIABLES
-{"\n".join([str(i+1)+'. '+q for i,q in enumerate(questions)])}
+{q_text}
 
 🎯 NEXT STEP
 Answer these. Then I’ll give you a precise move.
 """
-
 
 def hybrid_response(questions):
     return f"""
